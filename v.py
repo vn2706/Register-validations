@@ -5,7 +5,7 @@ import msoffcrypto
 import re
 
 # --- 1. UI CONFIG ---
-st.set_page_config(page_title="FnF Audit Portal", page_icon="📂", layout="wide")
+st.set_page_config(page_title="Checkpoint Portal", page_icon="📂", layout="wide")
 
 st.markdown("""
     <style>
@@ -104,7 +104,7 @@ def compare_logic(val1, val2, is_date=False):
 
 # --- 3. MAIN APP ---
 
-st.markdown('<div class="header-container"><h1>📂 FnF Integrity & Audit Portal</h1></div>', unsafe_allow_html=True)
+st.markdown('<div class="header-container"><h1>📂 Welcome to Checkpoint Portal</h1></div>', unsafe_allow_html=True)
 
 with st.sidebar:
     input_file = st.file_uploader("1. Input Sheet", type=['xlsx'])
