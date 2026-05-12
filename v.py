@@ -72,10 +72,6 @@ def clean_num(val):
     except: return 0.0
 
 def compare_logic(val1, val2, is_date=False):
-    """
-    If Numeric: returns difference (rounded to 2).
-    If Text: returns Yes/No.
-    """
     if is_date:
         try:
             if pd.isna(val1) or pd.isna(val2): return "No"
@@ -84,19 +80,16 @@ def compare_logic(val1, val2, is_date=False):
             return "Yes" if d1 == d2 else f"No ({d1})"
         except: return "No"
 
-    # Check if values are numeric
     s1 = str(val1).replace(',', '').strip()
     s2 = str(val2).replace(',', '').strip()
     
     try:
-        # Attempt numeric comparison
         float(s1)
         float(s2)
         n1, n2 = clean_num(val1), clean_num(val2)
         diff = round(n1 - n2, 2)
         return 0 if abs(diff) < 0.01 else diff
     except ValueError:
-        # Fallback to Text comparison
         v1 = str(val1).strip().lower()
         v2 = str(val2).strip().lower()
         if v1 == v2: return "Yes"
@@ -104,7 +97,7 @@ def compare_logic(val1, val2, is_date=False):
 
 # --- 3. MAIN APP ---
 
-st.markdown('<div class="header-container"><h1>📂 Welcome to Checkpoint Portal</h1></div>', unsafe_allow_html=True)
+st.markdown('<div class="header-container"><h1>📂 FnF Integrity & Audit Portal</h1></div>', unsafe_allow_html=True)
 
 with st.sidebar:
     input_file = st.file_uploader("1. Input Sheet", type=['xlsx'])
@@ -135,7 +128,7 @@ if run_validation and all([input_file, hc_file, bank_file, salary_file]):
             final_df = final_df.merge(df_bank, left_on='Employee No', right_on=bank_id_col, how='left')
             final_df = final_df.merge(df_input, left_on='Employee No', right_on='Employee ID', how='left', suffixes=('','_inp'))
 
-            # Logic
+            # Basic UI/HC Fields
             hc_join = get_col(df_hc, "Employment Details Group Date of Joining / Group Date of Joining")
             hc_exit = get_col(df_hc, "Employment Details Actual Exit Date / Actual Exit Date")
             hc_resig = get_col(df_hc, "Employment Details Date of Resignation / Resignation Date")
@@ -159,19 +152,46 @@ if run_validation and all([input_file, hc_file, bank_file, salary_file]):
             final_df['Lookup_ResignedDate'] = final_df[hc_resig] if hc_resig else None
             final_df['chk8'] = final_df.apply(lambda x: compare_logic(x.get('ResignedDate'), x['Lookup_ResignedDate'], True), axis=1)
 
-            # Leave Encashment Logic
+            # Leave Encashment logic
             inp_le_days = get_col(df_input, "Leave Encashment / Total Leave Encashment / Leave Encashment Days")
             final_df['Lookup_Leave Encash'] = final_df[inp_le_days] if inp_le_days else 0
             final_df['chk9'] = final_df.apply(lambda x: compare_logic(x.get('Leave Encashment Days'), x['Lookup_Leave Encash']), axis=1)
             final_df['calc_le'] = final_df.apply(lambda x: (max(clean_num(x.get('Basic')), 0.5 * clean_num(x.get('IBP'))) / 30) * clean_num(x.get('Leave Encashment Days')), axis=1)
             final_df['chk10'] = final_df.apply(lambda x: compare_logic(x.get('LeaveEncas'), x['calc_le']), axis=1)
 
-            # Arrears
-            arr_cfg = {'basic': ('Ar-BASIC', 'Arr Basic Pay'), 'HRA': ('ArrHRA', 'Arr HRA'), 'consy': ('Consy_Bn_S', 'Consistency Bonus'), 'stt': ('Stt_Bo_S_A', 'Arr Adv Stt Bonus'), 'sales': ('Sales_Cm_A', 'Sales linked'), 'mob': ('Moble_S_Ar', 'Mobile Allow')}
+            # --- ARREARS LOGIC WITH ALL SLASH VARIATIONS ---
+            arr_cfg = {
+                'basic': (
+                    'Basic_S_Ar / Basic sales arr / Basic Sales / Basic pay / Ar-BASIC / Ar BASIC', 
+                    'Arr Basic Pay / Arr Basic Pay Sales master / Basic Pay'
+                ),
+                'HRA': (
+                    'HRA_S_Arrs / HRA sales arr / ArrHRA', 
+                    'Arr HRA Sales Master / HRA Sales Master / Arr HRA'
+                ),
+                'consy': (
+                    'Consy_Bn_S / Consistency Bonus', 
+                    'Arr Consistency Bonus Sales M / Arr Consistency Allowance / Consistency Bonus'
+                ),
+                'stt': (
+                    'Stt_Bo_S_A / Arr Adv Stt Bonus SalesMaster / Adv Statutory Bonus', 
+                    'Arr Adv Stt Bonus'
+                ),
+                'sales': (
+                    'Sales_Cm_A / Sales linked', 
+                    'Arr Sales Linked / Sales linked'
+                ),
+                'mob': (
+                    'Mobile_S_Ar / Mobile Allow Sales Master', 
+                    'Arr Mobile Allow Sales Master / Mobile Allow Sales Master'
+                )
+            }
+
             for k, (s_o, i_o) in arr_cfg.items():
-                sc = get_col(df_salary, s_o); ic = get_col(df_input, i_o)
-                final_df[f'v_{k}'] = final_df[sc] if sc else 0
-                final_df[f'l_{k}'] = final_df[ic] if ic else 0
+                sc = get_col(df_salary, s_o)
+                ic = get_col(df_input, i_o)
+                final_df[f'v_{k}'] = final_df[sc] if sc else 0.0
+                final_df[f'l_{k}'] = final_df[ic] if ic else 0.0
                 final_df[f'c_{k}'] = final_df.apply(lambda x: compare_logic(x[f'v_{k}'], x[f'l_{k}']), axis=1)
 
             # --- COLUMN ORDERING ---
@@ -188,36 +208,37 @@ if run_validation and all([input_file, hc_file, bank_file, salary_file]):
                 "lookup_IFSC", "chk6", "Primary Bank Account No", "Lookup_acc_no", "chk7",
                 "Division Code", "Division Name", "CalcPFOn", "CTC", "ResignedDate", "Lookup_ResignedDate", "chk8",
                 "Inactive Reason", "Total Days", "Leave Encashment Days", "Lookup_Leave Encash", "chk9",
-                "LeaveEncas", "chk10", "Basic", "IBP", "calc_le", # Moved chk10 here as requested
+                "LeaveEncas", "chk10", "Basic", "IBP", "calc_le",
                 "v_basic", "l_basic", "c_basic", "v_HRA", "l_HRA", "c_HRA", "v_consy", "l_consy", "c_consy",
                 "v_stt", "l_stt", "c_stt", "v_sales", "l_sales", "c_sales", "v_mob", "l_mob", "c_mob",
                 "GROSS EARNING", "P.TAX"
             ]
 
             result = final_df.reindex(columns=final_order)
+            
+            # --- DISPLAY MAPPING ---
             mapping = {
-                "chk1":"Check", "chk2":"Check ", "chk3":"Check  ", "chk6":"Check   ", "chk9":"Check    ", "chk10":"check",
-                "chk4":"check ", "chk5":"check  ", "chk7":"check   ", "chk8":"check    ",
-                "v_basic":"Basic_S_Ar", "l_basic":"lookup_basic", "c_basic":"check     ",
-                "v_HRA":"HRA_S_Arrs", "l_HRA":"lookup_HRA", "c_HRA":"check      ",
-                "v_consy":"Consy_Bn_S", "l_consy":"lookup_consy", "c_consy":"check       ",
-                "v_stt":"Stt_Bo_S_A", "l_stt":"lookup_stt_bo", "c_stt":"check        ",
-                "v_sales":"Sales_Cm_A", "l_sales":"lookup_sales_cm", "c_sales":"check         ",
-                "v_mob":"Mobile_S_Ar", "l_mob":"lookup_mobile_s", "c_mob":"check          ",
+                "v_basic": "Basic_S_Ar", "l_basic": "lookup_basic", "c_basic": "check_basic",
+                "v_HRA": "HRA_S_Arrs", "l_HRA": "lookup_HRA", "c_HRA": "check_HRA",
+                "v_consy": "Consy_Bn_S", "l_consy": "lookup_consy", "c_consy": "check_consy",
+                "v_stt": "Stt_Bo_S_A", "l_stt": "lookup_stt_bo", "c_stt": "check_stt",
+                "v_sales": "Sales_Cm_A", "l_sales": "lookup_sales_cm", "c_sales": "check_sales",
+                "v_mob": "Mobile_S_Ar", "l_mob": "lookup_mobile_s", "c_mob": "check_mobile",
+                "chk1":"Check", "chk2":"Check ", "chk3":"Check  ", "chk4":"check ", "chk5":"check  ", 
+                "chk6":"Check   ", "chk7":"check   ", "chk8":"check    ", "chk9":"Check    ", "chk10":"check",
                 "calc_le":"calc", "LeaveEncas":"Leave Encas"
             }
             display_df = result.rename(columns=mapping)
 
             st.dataframe(display_df, use_container_width=True)
 
-            # --- EXCEL EXPORT WITH COLORS ---
+            # --- EXCEL EXPORT ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 display_df.to_excel(writer, index=False, sheet_name='Audit_Report')
                 workbook  = writer.book
                 worksheet = writer.sheets['Audit_Report']
                 
-                # Formats
                 yellow = workbook.add_format({'bg_color': '#FFF9C4', 'border': 1})
                 green = workbook.add_format({'bg_color': '#C8E6C9', 'border': 1})
                 header = workbook.add_format({'bold': True, 'bg_color': '#1E3A8A', 'font_color': 'white', 'border': 1})
@@ -226,11 +247,11 @@ if run_validation and all([input_file, hc_file, bank_file, salary_file]):
                     worksheet.write(0, col_num, value, header)
                     if 'lookup' in value.lower():
                         worksheet.set_column(col_num, col_num, 18, yellow)
-                    elif 'check' in value.lower():
+                    elif 'check' in value.lower() or 'chk' in value.lower():
                         worksheet.set_column(col_num, col_num, 15, green)
                     else:
                         worksheet.set_column(col_num, col_num, 18)
 
             st.download_button("📥 DOWNLOAD COLORED REPORT", output.getvalue(), "FnF_Audit_Final.xlsx", use_container_width=True)
         else:
-            st.error("Decryption failed.")
+            st.error("Decryption failed. Please check the password.")
