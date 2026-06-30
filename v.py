@@ -97,11 +97,10 @@ def variance_check(val1, val2):
     return 0 if abs(diff) < 0.001 else diff
 
 def identity_check(val1, val2, is_date=False):
-    if pd.isna(val1) or pd.isna(val2) or str(val1).strip() == "" or str(val2).strip().lower() == "nan": 
-        return "No"
     if is_date:
+        if pd.isna(val1) or pd.isna(val2) or str(val1).strip() == "" or str(val2).strip().lower() == "nan":
+            return "No"
         try:
-            # Clean and translate varied formatted date structures down into standard matching DD-MM-YYYY forms
             d1 = pd.to_datetime(str(val1).strip(), errors='coerce').strftime('%d-%m-%Y')
             d2 = pd.to_datetime(str(val2).strip(), errors='coerce').strftime('%d-%m-%Y')
             if d1 == "NaT" or d2 == "NaT" or pd.isna(d1) or pd.isna(d2):
@@ -109,8 +108,11 @@ def identity_check(val1, val2, is_date=False):
             return "Yes" if d1 == d2 else f"No ({d1})"
         except: 
             return "No"
-    v1 = str(val1).strip().lower()
-    v2 = str(val2).strip().lower()
+            
+    v1 = str(val1).strip().lower() if not pd.isna(val1) else ""
+    v2 = str(val2).strip().lower() if not pd.isna(val2) else ""
+    if v1 == "" or v1 == "none" or v2 == "" or v2 == "none":
+        return "No"
     return "Yes" if v1 == v2 else "No"
 
 # --- 3. MAIN APP ---
@@ -208,15 +210,19 @@ if run_audit:
             if df_input is not None and 'Employee ID' in df_input.columns:
                 target_cols = ['Employee ID', 'Leave Encashment', 'Inventory Recovery', 'NP recovery', 'Facility Recovery']
                 existing_cols = [c for c in target_cols if c in df_input.columns]
-                audit_df = audit_df.merge(df_input[existing_cols], left_on='Emp Code', right_on='Employee ID', how='left', suffixes=('', '_input'))
-                audit_df.rename(columns={'Employee ID': 'Lookup_Emp_Code'}, inplace=True)
+                
+                # Make a distinct matching copy to ensure data frame safety
+                input_lookup_df = df_input[existing_cols].copy()
+                input_lookup_df.rename(columns={'Employee ID': 'Lookup_Emp_Code'}, inplace=True)
+                
+                audit_df = audit_df.merge(input_lookup_df, left_on='Emp Code', right_on='Lookup_Emp_Code', how='left')
                 audit_df['Check_Emp_Code'] = audit_df.apply(lambda x: identity_check(x['Emp Code'], x['Lookup_Emp_Code']), axis=1)
                 
                 inv_rec_col = 'Inventory Recovery_input' if 'Inventory Recovery_input' in audit_df.columns else 'Inventory Recovery'
                 audit_df['Check_Inventory_Recovery'] = audit_df.apply(lambda x: variance_check(x.get('Inventory Recovery'), x.get(inv_rec_col)), axis=1)
             else:
                 audit_df['Lookup_Emp_Code'] = None
-                audit_df['Check_Emp_Code'] = None
+                audit_df['Check_Emp_Code'] = "No"
                 audit_df['Leave Encashment'] = None
                 audit_df['Inventory Recovery_input'] = None
                 audit_df['Check_Inventory_Recovery'] = None
