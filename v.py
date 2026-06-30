@@ -114,7 +114,6 @@ st.markdown('<div class="header-container"><h1>📂 Checkpoint Portal </h1></div
 
 missing_reports_log = {}
 
-# Registry to log rows group by group cleanly for dynamic table compilation
 observations_registry = {
     'Missing Columns': [],
     'Missing Employee Codes': [],
@@ -154,7 +153,6 @@ if run_audit:
     else:
         with st.status("🔍 Processing Active Reference Audits...") as status:
             
-            # 1. Ingest Master Sales Record & Map headers safely
             df_sales = load_encrypted_xlsx(sales_file, sales_pw) if sales_pw else load_file(sales_file)
             if df_sales is None:
                 st.error("Decryption or loading failed for the Sales Register. Verify your file and master password.")
@@ -163,37 +161,31 @@ if run_audit:
             df_sales = find_and_rename_sales_rates(df_sales)
             df_sales = clean_string_id(df_sales, 'Emp Code')
             
-            # Drop trailing rows completely if they don't contain an employee code
             df_sales = df_sales.dropna(subset=['Emp Code'])
             df_sales = df_sales[df_sales['Emp Code'].astype(str).str.strip() != ""]
             
             audit_df = df_sales.copy()
 
-            # GLOBAL DEFINITION: Target Arrear headers
             arrear_columns = [
                 'Basic Salary(Arrear)', 'Mobile Allowance(Arrear)', 'Consistency Allowance(Arrear)',
                 'Sales Linked Commission(Arrear)', 'House Rent Allowance(Arrear)', 'Advance Statutory Bonus(Arrear)'
             ]
 
-            # 2. Ingest Optional Supporting Files safely
             df_input = load_file(input_file) if input_file else None
             df_hc = load_file(hc_file) if hc_file else None
             df_bank = load_file(bank_file) if bank_file else None
             df_ctc = load_encrypted_xlsx(ctc_file, ctc_pw) if ctc_file else None
 
-            # Standardize identifier columns across ALL dataframes dynamically to prevent KeyErrors
             df_input = find_and_rename_id(df_input, 'Employee ID')
             df_hc = find_and_rename_id(df_hc, 'Employee ID')
             df_bank = find_and_rename_id(df_bank, 'Employee ID')
             df_ctc = find_and_rename_id(df_ctc, 'Employee ID')
 
-            # Clean and sanitize row strings to avoid center-alignment spacing issues
             if df_input is not None: df_input = clean_string_id(df_input, 'Employee ID')
             if df_hc is not None: df_hc = clean_string_id(df_hc, 'Employee ID')
             if df_bank is not None: df_bank = clean_string_id(df_bank, 'Employee ID')
             if df_ctc is not None: df_ctc = clean_string_id(df_ctc, 'Employee ID')
 
-            # Fault-Tolerance Check: If rate columns as a whole are missing from Sales Register, declare placeholders
             required_register_rates = ['BASIC SALARY RATE', 'MOBILE ALLOWANCE RATE', 'CONSISTENCY ALLOWANCE RATE', 'SALES LINKED COMMISSION RATE', 'HOUSE RENT ALLOWANCE RATE', 'STATUTORY BONUS RATE']
             for rate_col in required_register_rates:
                 if rate_col not in audit_df.columns:
@@ -215,7 +207,7 @@ if run_audit:
                 audit_df['Check_Emp_Code'] = audit_df.apply(lambda x: identity_check(x['Lookup_Emp_Code'], x['Emp Code']), axis=1)
                 
                 inv_rec_col = 'Inventory Recovery_input' if 'Inventory Recovery_input' in audit_df.columns else 'Inventory Recovery'
-                audit_df['Check_Inventory_Recovery'] = audit_df.apply(lambda x: variance_check(x.get('Inventory Recovery'), x.get(inv_rec_col)), axis=1)
+                audit_df['Check_Inventory_Recovery'] = audit_df.apply(lambda x: variance_check(x.get(inv_rec_col), x.get('Inventory Recovery')), axis=1)
             else:
                 audit_df['Lookup_Emp_Code'] = None
                 audit_df['Check_Emp_Code'] = None
@@ -224,6 +216,7 @@ if run_audit:
                 audit_df['Check_Inventory_Recovery'] = None
                 audit_df['NP recovery'] = None
                 audit_df['Facility Recovery_input'] = None
+                inv_rec_col = 'Inventory Recovery'
                 missing_reports_log["Input Sheet"] = ["Lookup", "Check (Emp Code Match)", "LE Days", "Inventory Recovery Lookup/Check", "NP_Lookup", "Facility Recovery Lookup/Check"]
 
             # Pipeline B: Headcount Report Lookups
@@ -231,10 +224,10 @@ if run_audit:
                 hc_cols = ['Employee ID', 'Employment Details Group Date of Joining', 'Employment Details Actual Exit Date', 'Position Title', 'State']
                 hc_existing = [c for c in hc_cols if c in df_hc.columns]
                 audit_df = audit_df.merge(df_hc[hc_existing], left_on='Emp Code', right_on='Employee ID', how='left', suffixes=('', '_hc'))
-                audit_df['Check_DOJ'] = audit_df.apply(lambda x: identity_check(x.get('Date of Joining'), x.get('Employment Details Group Date of Joining'), True), axis=1)
-                audit_df['Check_DOL'] = audit_df.apply(lambda x: identity_check(x.get('DOL'), x.get('Employment Details Actual Exit Date'), True), axis=1)
-                audit_df['Check_Designation'] = audit_df.apply(lambda x: identity_check(x.get('DESIGNATION'), x.get('Position Title')), axis=1)
-                audit_df['Check_State'] = audit_df.apply(lambda x: identity_check(x.get('STATE'), x.get('State')), axis=1)
+                audit_df['Check_DOJ'] = audit_df.apply(lambda x: identity_check(x.get('Employment Details Group Date of Joining'), x.get('Date of Joining'), True), axis=1)
+                audit_df['Check_DOL'] = audit_df.apply(lambda x: identity_check(x.get('Employment Details Actual Exit Date'), x.get('DOL'), True), axis=1)
+                audit_df['Check_Designation'] = audit_df.apply(lambda x: identity_check(x.get('Position Title'), x.get('DESIGNATION')), axis=1)
+                audit_df['Check_State'] = audit_df.apply(lambda x: identity_check(x.get('State'), x.get('STATE')), axis=1)
             else:
                 audit_df['Employment Details Group Date of Joining'] = None
                 audit_df['Check_DOJ'] = None
@@ -260,8 +253,8 @@ if run_audit:
                 actual_acc = audit_df[bank_acc_col] if bank_acc_col else None
                 actual_ifsc = audit_df[bank_ifsc_col] if bank_ifsc_col else None
                 
-                audit_df['Check_Bank_Acc'] = audit_df.apply(lambda x: identity_check(x.get('Bank_Acc_No'), actual_acc.loc[x.name] if bank_acc_col else None), axis=1)
-                audit_df['Check_IFSC'] = audit_df.apply(lambda x: identity_check(x.get('IFSC'), actual_ifsc.loc[x.name] if bank_ifsc_col else None), axis=1)
+                audit_df['Check_Bank_Acc'] = audit_df.apply(lambda x: identity_check(actual_acc.loc[x.name] if bank_acc_col else None, x.get('Bank_Acc_No')), axis=1)
+                audit_df['Check_IFSC'] = audit_df.apply(lambda x: identity_check(actual_ifsc.loc[x.name] if bank_ifsc_col else None, x.get('IFSC')), axis=1)
                 
                 audit_df['accountNumber'] = actual_acc
                 audit_df['IFSC Code'] = actual_ifsc
@@ -278,7 +271,7 @@ if run_audit:
                 ctc_existing = [c for c in ctc_cols if c in df_ctc.columns]
                 audit_df = audit_df.merge(df_ctc[ctc_existing], left_on='Emp Code', right_on='Employee ID', how='left', suffixes=('', '_ctc'))
                 
-                # Monthly rate lookups mapped side-by-side with /12 adjustments
+                # Monthly rate conversions (Annual fields / 12)
                 audit_df['Final Basic pay'] = audit_df['Basic Pay Sales Master'].apply(lambda x: round(clean_num(x) / 12, 3))
                 audit_df['Final Mobile allowance'] = audit_df['Mobile Allow Sales Master'].apply(lambda x: round(clean_num(x) / 12, 3))
                 audit_df['Final Const. Bonus'] = audit_df['Consistency Allowance'].apply(lambda x: round(clean_num(x) / 12, 3))
@@ -286,19 +279,19 @@ if run_audit:
                 audit_df['Final HRA'] = audit_df['HRA Sales Master'].apply(lambda x: round(clean_num(x) / 12, 3))
                 audit_df['Final Adv. stat bonus'] = audit_df['Adv Stt Bonus SalesMaster'].apply(lambda x: round(clean_num(x) / 12, 3))
                 
-                # CRITICAL CALCULATION SPECIFICATION: IBP monthly rate factor strictly requires /12 AND /2 logic parameters
+                # IBP column calculation: strictly / 12 for all values as requested
                 ibp_col_key = 'IBP' if 'IBP' in audit_df.columns else ('IBP_ctc' if 'IBP_ctc' in audit_df.columns else None)
                 if ibp_col_key:
-                    audit_df['Calculated_IBP'] = audit_df[ibp_col_key].apply(lambda x: round((clean_num(x) / 12) / 2, 3))
+                    audit_df['Calculated_IBP'] = audit_df[ibp_col_key].apply(lambda x: round(clean_num(x) / 12, 3))
                 else:
                     audit_df['Calculated_IBP'] = None
 
-                audit_df['Check_Basic_Rate'] = audit_df.apply(lambda x: variance_check(x.get('BASIC SALARY RATE'), x.get('Final Basic pay')), axis=1)
-                audit_df['Check_Mobile_Rate'] = audit_df.apply(lambda x: variance_check(x.get('MOBILE ALLOWANCE RATE'), x.get('Final Mobile allowance')), axis=1)
-                audit_df['Check_Consistency_Rate'] = audit_df.apply(lambda x: variance_check(x.get('CONSISTENCY ALLOWANCE RATE'), x.get('Final Const. Bonus')), axis=1)
-                audit_df['Check_Sales_Rate'] = audit_df.apply(lambda x: variance_check(x.get('SALES LINKED COMMISSION RATE'), x.get('Final Sales linked')), axis=1)
-                audit_df['Check_HRA_Rate'] = audit_df.apply(lambda x: variance_check(x.get('HOUSE RENT ALLOWANCE RATE'), x.get('Final HRA')), axis=1)
-                audit_df['Check_Statutory_Rate'] = audit_df.apply(lambda x: variance_check(x.get('STATUTORY BONUS RATE'), x.get('Final Adv. stat bonus')), axis=1)
+                audit_df['Check_Basic_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final Basic pay'), x.get('BASIC SALARY RATE')), axis=1)
+                audit_df['Check_Mobile_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final Mobile allowance'), x.get('MOBILE ALLOWANCE RATE')), axis=1)
+                audit_df['Check_Consistency_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final Const. Bonus'), x.get('CONSISTENCY ALLOWANCE RATE')), axis=1)
+                audit_df['Check_Sales_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final Sales linked'), x.get('SALES LINKED COMMISSION RATE')), axis=1)
+                audit_df['Check_HRA_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final HRA'), x.get('HOUSE RENT ALLOWANCE RATE')), axis=1)
+                audit_df['Check_Statutory_Rate'] = audit_df.apply(lambda x: variance_check(x.get('Final Adv. stat bonus'), x.get('STATUTORY BONUS RATE')), axis=1)
             else:
                 rate_cols = ['Final Basic pay', 'Check_Basic_Rate', 'Final Mobile allowance', 'Check_Mobile_Rate', 
                              'Final Const. Bonus', 'Check_Consistency_Rate', 'Final Sales linked', 'Check_Sales_Rate', 
@@ -309,46 +302,50 @@ if run_audit:
             # Pipeline F: Dependent Formulas & Cross-Checks
             le_input_col = 'Leave Encashment_input' if 'Leave Encashment_input' in audit_df.columns else 'Leave Encashment'
             np_input_col = 'NP recovery_input' if 'NP recovery_input' in audit_df.columns else 'NP recovery'
+            fac_rec_col = 'Facility Recovery_input' if 'Facility Recovery_input' in audit_df.columns else 'Facility Recovery'
             
             if df_ctc is not None and df_input is not None:
-                # Leave Encashment and NP Recovery mathematical architectures map sequentially to the newly divided Calculated_IBP
-                audit_df['Calc_LE_Payout'] = audit_df.apply(lambda x: round((max(clean_num(x.get('Basic Pay Sales Master')), clean_num(x.get('Calculated_IBP'))) / 30) * clean_num(x.get(le_input_col)), 3), axis=1)
+                # Calc = MAX(Basic Pay/12, IBP/12) / 30 * Leave Encashment Days
+                audit_df['Calc_LE_Payout'] = audit_df.apply(
+                    lambda x: round((max(clean_num(x.get('Final Basic pay')), clean_num(x.get('Calculated_IBP'))) / 30) * clean_num(x.get(le_input_col)), 3), axis=1
+                )
                 audit_df['Check_LE_Days_Variance'] = audit_df.apply(lambda x: variance_check(x.get('Calc_LE_Payout'), x.get('LE Days')), axis=1)
                 
-                audit_df['Calc_NP_Recovery'] = audit_df.apply(lambda x: round((max(clean_num(x.get('Basic Pay Sales Master')), clean_num(x.get('Calculated_IBP'))) / 30) * clean_num(x.get(np_input_col)), 3), axis=1)
+                # Calc_NP = MAX(Basic Pay/12, IBP/12) / 30 * NP Lookup
+                audit_df['Calc_NP_Recovery'] = audit_df.apply(
+                    lambda x: round((max(clean_num(x.get('Final Basic pay')), clean_num(x.get('Calculated_IBP'))) / 30) * clean_num(x.get(np_input_col)), 3), axis=1
+                )
                 audit_df['Check_NP_Variance'] = audit_df.apply(lambda x: variance_check(x.get('Notice Recovery'), x.get('Calc_NP_Recovery')), axis=1)
+                
+                # Check Facility Recovery = Lookup - Facility Recovery
+                audit_df['Check_Facility_Recovery'] = audit_df.apply(lambda x: variance_check(x.get(fac_rec_col), x.get('Facility Recovery')), axis=1)
             else:
                 audit_df['Calc_LE_Payout'] = None
                 audit_df['Check_LE_Days_Variance'] = None
                 audit_df['Calc_NP_Recovery'] = None
                 audit_df['Check_NP_Variance'] = None
-                missing_reports_log["Cross-Calculations (LE / NP)"] = ["Calc Payouts", "Calculated Notice Period Recovery", "Variance Checks"]
+                audit_df['Check_Facility_Recovery'] = None
+                missing_reports_log["Cross-Calculations"] = ["Calc Payouts", "Calculated Notice Period Recovery", "Variance Checks"]
 
-            # Independent Static Lookups/Placeholders safely tracking Input Sheet suffixes
+            # Independent Placeholders 
             audit_df['LE Days'] = audit_df[le_input_col] if df_input is not None else None
             audit_df['Lookup_PTax'] = None
             audit_df['Check_PTax'] = None
-            
-            fac_rec_col = 'Facility Recovery_input' if 'Facility Recovery_input' in audit_df.columns else 'Facility Recovery'
-            audit_df['Check_Facility_Recovery'] = audit_df.apply(lambda x: variance_check(x.get('Facility Recovery'), x.get(fac_rec_col)), axis=1) if df_input is not None else None
 
-            # --- GENERATING THE OBSERVATIONS LOGIC MATRIX (ONE CONSOLIDATED TABLE PER SECTION) ---
+            # --- GENERATING THE OBSERVATIONS LOGIC MATRIX ---
             for idx, row in audit_df.iterrows():
                 emp_id = str(row['Emp Code']).strip()
                 
-                # Exception 1: Unmapped/Missing Profile
                 if pd.isna(row['Lookup_Emp_Code']) or str(row['Lookup_Emp_Code']).strip() == "" or row['Lookup_Emp_Code'] is None:
                     observations_registry['Missing Employee Codes'].append({
                         "Employee ID": emp_id, "Value as per Register": emp_id, "Actual Lookup": "Missing reference entry"
                     })
                 
-                # Exception 2: Date of Joining Mismatches
                 if row['Check_DOJ'] == "No" or (isinstance(row['Check_DOJ'], str) and row['Check_DOJ'].startswith("No")):
                     observations_registry['DOJ Mismatch'].append({
                         "Employee ID": emp_id, "Value as per Register": str(row.get('Date of Joining')), "Actual Lookup": str(row.get('Employment Details Group Date of Joining'))
                     })
                 
-                # Exception 3: Standard Metadata String Mismatches (Yes / No Flags)
                 text_checks = {
                     'DOL Mismatch': ('DOL', 'Employment Details Actual Exit Date', 'Check_DOL'),
                     'Designation Mismatch': ('DESIGNATION', 'Position Title', 'Check_Designation'),
@@ -362,7 +359,6 @@ if run_audit:
                             "Employee ID": emp_id, "Value as per Register": str(row.get(reg_c)), "Actual Lookup": str(row.get(lkp_c))
                         })
 
-                # Exception 4: Numerical Variances (Threshold filter set to >= 1.0)
                 numeric_checks = {
                     'Inventory Recovery Variance': ('Inventory Recovery', inv_rec_col, 'Check_Inventory_Recovery'),
                     'Notice Period Variance': ('Notice Recovery', 'Calc_NP_Recovery', 'Check_NP_Variance'),
@@ -370,15 +366,15 @@ if run_audit:
                     'Leave Encashment Variance': ('Leave Encashment', 'Calc_LE_Payout', 'Check_LE_Days_Variance')
                 }
                 for heading, (reg_c, lkp_c, chk_c) in numeric_checks.items():
-                    v_val = abs(clean_num(row.get(chk_c)))
-                    if v_val >= 1.0:
-                        observations_registry[heading].append({
-                            "Employee ID": emp_id, "Value as per Register": str(row.get(reg_c)), "Actual Lookup": str(row.get(lkp_c))
-                        })
+                    if row[chk_c] is not None:
+                        v_val = abs(clean_num(row.get(chk_c)))
+                        if v_val >= 1.0:
+                            observations_registry[heading].append({
+                                "Employee ID": emp_id, "Value as per Register": str(row.get(reg_c)), "Actual Lookup": str(row.get(lkp_c))
+                            })
 
-                # Exception 5: Allowance Rates Mismatch Loop (Triggers only if all six rate checks >= 1.0 simultaneously)
                 rate_checks_list = ['Check_Basic_Rate', 'Check_Mobile_Rate', 'Check_Consistency_Rate', 'Check_Sales_Rate', 'Check_HRA_Rate', 'Check_Statutory_Rate']
-                if all(abs(clean_num(row.get(c))) >= 1.0 for c in rate_checks_list):
+                if all(row[c] is not None and abs(clean_num(row.get(c))) >= 1.0 for c in rate_checks_list):
                     observations_registry['All Allowance Rates Mismatch'].append({
                         "Employee ID": emp_id, 
                         "Value as per Register": f"Basic Rate: {row.get('BASIC SALARY RATE')}", 
@@ -412,7 +408,6 @@ if run_audit:
             final_headers = [h for h in ordered_headers if h in audit_df.columns]
             result_df = audit_df.reindex(columns=final_headers)
 
-            # Map into final layouts
             final_renaming = {
                 'Lookup_Emp_Code': 'Lookup', 'Check_Emp_Code': 'Check',
                 'Employment Details Group Date of Joining': 'Lookup ', 'Check_DOJ': 'Check ',
@@ -430,21 +425,18 @@ if run_audit:
                 'Leave Encashment': 'Leave Encashment', 'LE Days': 'LE Days',
                 'Basic Pay Sales Master': 'Basic', 'Calculated_IBP': 'IBP',
                 'Calc_LE_Payout': 'Calc', 'Check_LE_Days_Variance': 'Check             ',
-                'Lookup_PTax': 'Lookup              ', 'Check_PTax': 'check',
+                'Lookup_PTax': 'Lookup              ', 'Check_PTax': 'Check               ',
                 'Inventory Recovery_input': 'Lookup               ', 'Check_Inventory_Recovery': 'Check                ',
-                'NP recovery': 'NP_Lookup', 'Calc_NP_Recovery': 'Calc ', 'Check_NP_Variance': 'check ',
-                'Facility Recovery_input': 'Lookup                ', 'Check_Facility_Recovery': 'check  '
+                'NP recovery': 'NP_Lookup', 'Calc_NP_Recovery': 'Calc ', 'Check_NP_Variance': 'Check                  ',
+                'Facility Recovery_input': 'Lookup                ', 'Check_Facility_Recovery': 'Check                   '
             }
             
             display_df = result_df.rename(columns=final_renaming)
             status.update(label="✅ Run Completed Successfully!", state="complete")
 
-    # Render Sheets
     st.dataframe(display_df, use_container_width=True)
 
-    # Render Interface Summary Logs
     st.markdown("## 📋 Real-Time Audit Observations Sheet Log")
-    
     active_observations_found = False
     for heading, rows in observations_registry.items():
         if rows:
@@ -456,7 +448,7 @@ if run_audit:
     if not active_observations_found:
         st.success("🎉 Perfect Run! No audit exceptions triggered on this data subset.")
 
-    # --- 5. EXCEL EXPORT WORKBOOK GENERATION ENGINE (STRICTLY UNHIGHLIGHTED) ---
+    # --- 5. EXCEL EXPORT ENGINE ---
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         display_df.to_excel(writer, index=False, sheet_name='FnF_Master_Audit')
@@ -473,7 +465,6 @@ if run_audit:
                 worksheet.set_column(col_num, col_num, 18)
             worksheet.write(0, col_num, col_name, header_fmt)
 
-        # Build Sheet 2 exception observations sequential matrix rows
         obs_rows = []
         for heading, rows in observations_registry.items():
             if rows:
