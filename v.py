@@ -169,7 +169,7 @@ if run_audit:
             df_sales = clean_string_id(df_sales, 'Emp Code')
             
             df_sales = df_sales.dropna(subset=['Emp Code'])
-            df_sales = df_sales[df_sales['Emp Code'].astype(str).str.strip() != ""]
+            df_sales = df_sales[df_sales['Emp Code'].astype(str).str.strip() != "" ]
             
             audit_df = df_sales.copy()
 
@@ -197,6 +197,19 @@ if run_audit:
             for rate_col in required_register_rates:
                 if rate_col not in audit_df.columns:
                     audit_df[rate_col] = 0.0
+
+            # --- TARGETED CHECK: Log IDs in Input Sheet that are missing from Sales Register ---
+            if df_input is not None and 'Employee ID' in df_input.columns:
+                # Find elements in input sheet not present in sales register keys
+                sales_ids_set = set(audit_df['Emp Code'].dropna().astype(str).str.strip())
+                for idx, input_row in df_input.iterrows():
+                    inp_id = str(input_row['Employee ID']).strip()
+                    if inp_id and inp_id != "None" and inp_id not in sales_ids_set:
+                        observations_registry['Missing Employee Codes'].append({
+                            "Employee ID": inp_id,
+                            "Value as per Register": "Missing from Payout Register",
+                            "Actual Lookup": f"Present in Input Sheet"
+                        })
 
             # --- EXECUTE SEGMENTED PIPELINES BASED ON UPLOADS ---
 
@@ -330,13 +343,7 @@ if run_audit:
             for idx, row in audit_df.iterrows():
                 emp_id = str(row['Emp Code']).strip()
                 
-                # Check for profile mappings across sheets cleanly
-                if pd.isna(row['Lookup_Emp_Code']) or str(row['Lookup_Emp_Code']).strip() == "" or str(row['Lookup_Emp_Code']).strip().lower() == 'nan':
-                    observations_registry['Missing Employee Codes'].append({
-                        "Employee ID": emp_id, "Value as per Register": emp_id, "Actual Lookup": "Missing reference entry"
-                    })
-                    continue  # Stop tracking field discrepancies if profile lookup entirely failed
-                
+                # Internal matching field exceptions continue normally
                 if row['Check_DOJ'] == "No" or (isinstance(row['Check_DOJ'], str) and row['Check_DOJ'].startswith("No")):
                     observations_registry['DOJ Mismatch'].append({
                         "Employee ID": emp_id, "Value as per Register": str(row.get('Date of Joining')), "Actual Lookup": str(row.get('Employment Details Group Date of Joining'))
