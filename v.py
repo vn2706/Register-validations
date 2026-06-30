@@ -53,9 +53,7 @@ def clean_num(val):
 
 def clean_string_id(df, col_name):
     if df is not None and col_name in df.columns:
-        # Converts to string, strips whitespace, and converts float-looking strings (like '123.0') to '123'
         df[col_name] = df[col_name].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-        # Filter out pandas hidden 'nan' strings
         df[col_name] = df[col_name].replace('nan', None)
     return df
 
@@ -103,9 +101,9 @@ def identity_check(val1, val2, is_date=False):
         return "No"
     if is_date:
         try:
-            # Force conversion through pandas datetime engine to format consistently as DD-MM-YYYY
-            d1 = pd.to_datetime(val1, errors='coerce').strftime('%d-%m-%Y')
-            d2 = pd.to_datetime(val2, errors='coerce').strftime('%d-%m-%Y')
+            # Clean and translate varied formatted date structures down into standard matching DD-MM-YYYY forms
+            d1 = pd.to_datetime(str(val1).strip(), errors='coerce').strftime('%d-%m-%Y')
+            d2 = pd.to_datetime(str(val2).strip(), errors='coerce').strftime('%d-%m-%Y')
             if d1 == "NaT" or d2 == "NaT" or pd.isna(d1) or pd.isna(d2):
                 return "No"
             return "Yes" if d1 == d2 else f"No ({d1})"
@@ -128,8 +126,6 @@ observations_registry = {
     'DOL Mismatch': [],
     'Designation Mismatch': [],
     'State Mismatch': [],
-    'Bank Account Mismatch': [],
-    'IFSC Mismatch': [],
     'Inventory Recovery Variance': [],
     'Notice Period Variance': [],
     'Facility Recovery Variance': [],
@@ -147,9 +143,8 @@ with st.sidebar:
     
     input_file = st.file_uploader("2. Input Sheet", type=['xlsx', 'csv'])
     hc_file = st.file_uploader("3. HC Report", type=['xlsx', 'csv'])
-    bank_file = st.file_uploader("4. Bank Report", type=['xlsx', 'csv'])
     
-    ctc_file = st.file_uploader("5. CTC Report", type=['xlsx', 'csv'])
+    ctc_file = st.file_uploader("4. CTC Report", type=['xlsx', 'csv'])
     ctc_pw = st.text_input("CTC Report Password (If protected)", type="password")
     
     run_audit = st.button("🚀 RUN MATRIX AUDIT", use_container_width=True)
@@ -169,7 +164,7 @@ if run_audit:
             df_sales = clean_string_id(df_sales, 'Emp Code')
             
             df_sales = df_sales.dropna(subset=['Emp Code'])
-            df_sales = df_sales[df_sales['Emp Code'].astype(str).str.strip() != "" ]
+            df_sales = df_sales[df_sales['Emp Code'].astype(str).str.strip() != ""]
             
             audit_df = df_sales.copy()
 
@@ -180,17 +175,14 @@ if run_audit:
 
             df_input = load_file(input_file) if input_file else None
             df_hc = load_file(hc_file) if hc_file else None
-            df_bank = load_file(bank_file) if bank_file else None
             df_ctc = load_encrypted_xlsx(ctc_file, ctc_pw) if ctc_file else None
 
             df_input = find_and_rename_id(df_input, 'Employee ID')
             df_hc = find_and_rename_id(df_hc, 'Employee ID')
-            df_bank = find_and_rename_id(df_bank, 'Employee ID')
             df_ctc = find_and_rename_id(df_ctc, 'Employee ID')
 
             if df_input is not None: df_input = clean_string_id(df_input, 'Employee ID')
             if df_hc is not None: df_hc = clean_string_id(df_hc, 'Employee ID')
-            if df_bank is not None: df_bank = clean_string_id(df_bank, 'Employee ID')
             if df_ctc is not None: df_ctc = clean_string_id(df_ctc, 'Employee ID')
 
             required_register_rates = ['BASIC SALARY RATE', 'MOBILE ALLOWANCE RATE', 'CONSISTENCY ALLOWANCE RATE', 'SALES LINKED COMMISSION RATE', 'HOUSE RENT ALLOWANCE RATE', 'STATUTORY BONUS RATE']
@@ -198,9 +190,8 @@ if run_audit:
                 if rate_col not in audit_df.columns:
                     audit_df[rate_col] = 0.0
 
-            # --- TARGETED CHECK: Log IDs in Input Sheet that are missing from Sales Register ---
+            # --- TARGETED CHECK: Cross-check if input sheet employee records are present in register ---
             if df_input is not None and 'Employee ID' in df_input.columns:
-                # Find elements in input sheet not present in sales register keys
                 sales_ids_set = set(audit_df['Emp Code'].dropna().astype(str).str.strip())
                 for idx, input_row in df_input.iterrows():
                     inp_id = str(input_row['Employee ID']).strip()
@@ -208,7 +199,7 @@ if run_audit:
                         observations_registry['Missing Employee Codes'].append({
                             "Employee ID": inp_id,
                             "Value as per Register": "Missing from Payout Register",
-                            "Actual Lookup": f"Present in Input Sheet"
+                            "Actual Lookup": "Present in Input Sheet"
                         })
 
             # --- EXECUTE SEGMENTED PIPELINES BASED ON UPLOADS ---
@@ -252,34 +243,6 @@ if run_audit:
                 audit_df['Check_Designation'] = None
                 audit_df['State'] = None
                 audit_df['Check_State'] = None
-
-            # Pipeline C: Bank Report Lookups
-            if df_bank is not None and 'Employee ID' in df_bank.columns:
-                bank_acc_col = 'accountNumber' if 'accountNumber' in df_bank.columns else ('Account Number' if 'Account Number' in df_bank.columns else None)
-                bank_ifsc_col = 'IFSC Code' if 'IFSC Code' in df_bank.columns else ('IFSC' if 'IFSC' in df_bank.columns else None)
-                
-                slice_cols = ['Employee ID']
-                if bank_acc_col: slice_cols.append(bank_acc_col)
-                if bank_ifsc_col: slice_cols.append(bank_ifsc_col)
-                
-                audit_df = audit_df.merge(df_bank[slice_cols], left_on='Emp Code', right_on='Employee ID', how='left', suffixes=('', '_bank'))
-                
-                actual_acc = audit_df[bank_acc_col] if bank_acc_col else None
-                actual_ifsc = audit_df[bank_ifsc_col] if bank_ifsc_col else None
-                
-                if bank_acc_col: audit_df[bank_acc_col] = audit_df[bank_acc_col].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-                if bank_ifsc_col: audit_df[bank_ifsc_col] = audit_df[bank_ifsc_col].astype(str).str.strip()
-
-                audit_df['Check_Bank_Acc'] = audit_df.apply(lambda x: identity_check(x.get('Bank_Acc_No'), x.get(bank_acc_col)), axis=1)
-                audit_df['Check_IFSC'] = audit_df.apply(lambda x: identity_check(x.get('IFSC'), x.get(bank_ifsc_col)), axis=1)
-                
-                audit_df['accountNumber'] = audit_df[bank_acc_col]
-                audit_df['IFSC Code'] = audit_df[bank_ifsc_col]
-            else:
-                audit_df['accountNumber'] = None
-                audit_df['Check_Bank_Acc'] = None
-                audit_df['IFSC Code'] = None
-                audit_df['Check_IFSC'] = None
 
             # Pipeline D: CTC Report Lookups
             if df_ctc is not None and 'Employee ID' in df_ctc.columns:
@@ -343,7 +306,6 @@ if run_audit:
             for idx, row in audit_df.iterrows():
                 emp_id = str(row['Emp Code']).strip()
                 
-                # Internal matching field exceptions continue normally
                 if row['Check_DOJ'] == "No" or (isinstance(row['Check_DOJ'], str) and row['Check_DOJ'].startswith("No")):
                     observations_registry['DOJ Mismatch'].append({
                         "Employee ID": emp_id, "Value as per Register": str(row.get('Date of Joining')), "Actual Lookup": str(row.get('Employment Details Group Date of Joining'))
@@ -352,9 +314,7 @@ if run_audit:
                 text_checks = {
                     'DOL Mismatch': ('DOL', 'Employment Details Actual Exit Date', 'Check_DOL'),
                     'Designation Mismatch': ('DESIGNATION', 'Position Title', 'Check_Designation'),
-                    'State Mismatch': ('STATE', 'State', 'Check_State'),
-                    'Bank Account Mismatch': ('Bank_Acc_No', 'accountNumber', 'Check_Bank_Acc'),
-                    'IFSC Mismatch': ('IFSC', 'IFSC Code', 'Check_IFSC')
+                    'State Mismatch': ('STATE', 'State', 'Check_State')
                 }
                 for heading, (reg_c, lkp_c, chk_c) in text_checks.items():
                     if row[chk_c] == "No" or (isinstance(row[chk_c], str) and row[chk_c].startswith("No")):
@@ -395,16 +355,16 @@ if run_audit:
                 'Employment Details Group Date of Joining', 'Check_DOJ', 'DOL', 'Employment Details Actual Exit Date', 'Check_DOL',
                 'DEPARTMENT', 'DESIGNATION', 'Position Title', 'Check_Designation', 'Cost Centre', 'Grade', 'GENDER', 'PAN',
                 'LOCATION CODE', 'LOCATION', 'STATE', 'State', 'Check_State', 'Entity', 'Bank_Name', 'Bank_Acc_No',
-                'accountNumber', 'Check_Bank_Acc', 'IFSC', 'IFSC Code', 'Check_IFSC', 'STATUS_DESC', 'BASIC SALARY RATE',
-                'Final Basic pay', 'Check_Basic_Rate', 'MOBILE ALLOWANCE RATE', 'Final Mobile allowance', 'Check_Mobile_Rate',
-                'CONSISTENCY ALLOWANCE RATE', 'Final Const. Bonus', 'Check_Consistency_Rate', 'SALES LINKED COMMISSION RATE',
-                'Final Sales linked', 'Check_Sales_Rate', 'HOUSE RENT ALLOWANCE RATE', 'Final HRA', 'Check_HRA_Rate',
-                'STATUTORY BONUS RATE', 'Final Adv. stat bonus', 'Check_Statutory_Rate', 'Rated_Gross', 'Leave Encashment',
-                'LE Days', 'Basic Pay Sales Master', 'Calculated_IBP', 'Calc_LE_Payout', 'Check_LE_Days_Variance',
-                'Gross_Salary', 'GROSSARREAR', 'NETGROSSTOTAL', 'PF', 'VPF', 'ESI', 'Professional_Tax', 'Lookup_PTax', 'Check_PTax',
-                'Income_Tax', 'Hold Release Salary', 'Neg Salary Brought Forward', 'Inventory Recovery', 'Inventory Recovery_input',
-                'Check_Inventory_Recovery', 'Emp LWF', 'Notice Recovery', 'NP recovery', 'Calc_NP_Recovery', 'Check_NP_Variance',
-                'Facility Recovery', 'Facility Recovery_input', 'Check_Facility_Recovery', 'Emp LWF(Arrear)', 'Gross_Deduction', 'Net_Salary'
+                'STATUS_DESC', 'BASIC SALARY RATE', 'Final Basic pay', 'Check_Basic_Rate', 'MOBILE ALLOWANCE RATE', 
+                'Final Mobile allowance', 'Check_Mobile_Rate', 'CONSISTENCY ALLOWANCE RATE', 'Final Const. Bonus', 
+                'Check_Consistency_Rate', 'SALES LINKED COMMISSION RATE', 'Final Sales linked', 'Check_Sales_Rate', 
+                'HOUSE RENT ALLOWANCE RATE', 'Final HRA', 'Check_HRA_Rate', 'STATUTORY BONUS RATE', 'Final Adv. stat bonus', 
+                'Check_Statutory_Rate', 'Rated_Gross', 'Leave Encashment', 'LE Days', 'Basic Pay Sales Master', 
+                'Calculated_IBP', 'Calc_LE_Payout', 'Check_LE_Days_Variance', 'Gross_Salary', 'GROSSARREAR', 'NETGROSSTOTAL', 
+                'PF', 'VPF', 'ESI', 'Professional_Tax', 'Lookup_PTax', 'Check_PTax', 'Income_Tax', 'Hold Release Salary', 
+                'Neg Salary Brought Forward', 'Inventory Recovery', 'Inventory Recovery_input', 'Check_Inventory_Recovery', 
+                'Emp LWF', 'Notice Recovery', 'NP recovery', 'Calc_NP_Recovery', 'Check_NP_Variance', 'Facility Recovery', 
+                'Facility Recovery_input', 'Check_Facility_Recovery', 'Emp LWF(Arrear)', 'Gross_Deduction', 'Net_Salary'
             ]
 
             final_headers = [h for h in ordered_headers if h in audit_df.columns]
@@ -416,8 +376,6 @@ if run_audit:
                 'Employment Details Actual Exit Date': 'Lookup  ', 'Check_DOL': 'Check  ',
                 'Position Title': 'Lookup   ', 'Check_Designation': 'Check   ',
                 'State': 'Lookup    ', 'Check_State': 'Check    ',
-                'accountNumber': 'Lookup     ', 'Check_Bank_Acc': 'Check     ',
-                'IFSC Code': 'Lookup      ', 'Check_IFSC': 'Check      ',
                 'Final Basic pay': 'Lookup       ', 'Check_Basic_Rate': 'Check       ',
                 'Final Mobile allowance': 'Lookup ........', 'Check_Mobile_Rate': 'Check        ',
                 'Final Const. Bonus': 'Lookup         ', 'Check_Consistency_Rate': 'Check         ',
