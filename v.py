@@ -64,20 +64,34 @@ def find_and_rename_id(df, baseline_name='Employee ID'):
     return df
 
 def identity_check(val1, val2, is_date=False):
+    """
+    Compares Register value (val1) against Reference Lookup value (val2).
+    If is_date=True, it reformats val2 (e.g. 04-05-2023) to match val1's format (e.g. 04 May 2023).
+    """
+    if pd.isna(val1) or pd.isna(val2) or str(val1).strip() == "" or str(val2).strip().lower() == "nan":
+        return "No"
+        
+    v1_str = str(val1).strip()
+    v2_str = str(val2).strip()
+
     if is_date:
-        if pd.isna(val1) or pd.isna(val2) or str(val1).strip() == "" or str(val2).strip().lower() == "nan":
-            return "No"
         try:
-            d1 = pd.to_datetime(str(val1).strip(), errors='coerce').strftime('%d-%m-%Y')
-            d2 = pd.to_datetime(str(val2).strip(), errors='coerce').strftime('%d-%m-%Y')
-            if d1 == "NaT" or d2 == "NaT" or pd.isna(d1) or pd.isna(d2):
+            # Parse the reference date and transform its layout to match the Register's exact '04 May 2023' formatting style
+            parsed_v2 = pd.to_datetime(v2_str, errors='coerce')
+            if pd.isna(parsed_v2):
                 return "No"
-            return "Yes" if d1 == d2 else f"No ({d1})"
+            v2_formatted = parsed_v2.strftime('%d %b %Y')
+            
+            # Clean up potential leading zeros in text months if register has single-digit format variations
+            if v1_str.startswith('0') and not v2_formatted.startswith('0'):
+                v2_formatted = '0' + v2_formatted
+                
+            return "Yes" if v1_str.lower() == v2_formatted.lower() else f"No ({v2_formatted})"
         except: 
             return "No"
             
-    v1 = str(val1).strip().lower() if not pd.isna(val1) else ""
-    v2 = str(val2).strip().lower() if not pd.isna(val2) else ""
+    v1 = v1_str.lower()
+    v2 = v2_str.lower()
     if v1 == "" or v1 == "none" or v2 == "" or v2 == "none":
         return "No"
     return "Yes" if v1 == v2 else "No"
@@ -183,12 +197,27 @@ if run_audit:
                 emp_id = str(row['Emp Code']).strip()
                 
                 if row['Check_DOJ'] == "No" or (isinstance(row['Check_DOJ'], str) and row['Check_DOJ'].startswith("No")):
+                    # Formats date string representation for the observations table view
+                    lkp_doj = row.get('Employment Details Group Date of Joining')
+                    try:
+                        formatted_lkp_doj = pd.to_datetime(str(lkp_doj).strip(), errors='coerce').strftime('%d %b %Y')
+                    except:
+                        formatted_lkp_doj = str(lkp_doj)
                     observations_registry['DOJ Mismatch'].append({
-                        "Employee ID": emp_id, "Value as per Register": str(row.get('Date of Joining')), "Actual Lookup": str(row.get('Employment Details Group Date of Joining'))
+                        "Employee ID": emp_id, "Value as per Register": str(row.get('Date of Joining')), "Actual Lookup": formatted_lkp_doj
                     })
                 
+                if row['Check_DOL'] == "No" or (isinstance(row['Check_DOL'], str) and row['Check_DOL'].startswith("No")):
+                    lkp_dol = row.get('Employment Details Actual Exit Date')
+                    try:
+                        formatted_lkp_dol = pd.to_datetime(str(lkp_dol).strip(), errors='coerce').strftime('%d %b %Y')
+                    except:
+                        formatted_lkp_dol = str(lkp_dol)
+                    observations_registry['DOL Mismatch'].append({
+                        "Employee ID": emp_id, "Value as per Register": str(row.get('DOL')), "Actual Lookup": formatted_lkp_dol
+                    })
+
                 text_checks = {
-                    'DOL Mismatch': ('DOL', 'Employment Details Actual Exit Date', 'Check_DOL'),
                     'Designation Mismatch': ('DESIGNATION', 'Position Title', 'Check_Designation'),
                     'State Mismatch': ('STATE', 'State', 'Check_State')
                 }
